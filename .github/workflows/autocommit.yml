@@ -1,0 +1,45 @@
+name: Auto commit
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    # 14:25–18:25 UTC, Mon–Sat = 5 runs/day, 10:25–14:25 Eastern (EDT)
+    - cron: "25 14-18 * * 1-6"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  auto_commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Modify last update
+        run: date '+%Y-%m-%dT%H:%M:%SZ' > LAST_UPDATED
+
+      - name: Commit changes
+        run: |
+          git config --local user.name "Shawn Li"
+          git config --local user.email "lishawn81@gmail.com"
+          git add -A
+
+          arr[0]="chore(bot): commit"
+          arr[1]="chore(bot): bump timestamp"
+          arr[2]="chore(bot): sync"
+          rand=$[$RANDOM % ${#arr[@]}]
+
+          git commit -m "${arr[$rand]}" || echo "nothing to commit"
+
+      - name: GitHub Push
+        uses: ad-m/github-push-action@master
+        with:
+          directory: "."
+          branch: main
+          github_token: ${{ secrets.GITHUB_TOKEN }}
