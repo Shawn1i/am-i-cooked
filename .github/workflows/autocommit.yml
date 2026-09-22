@@ -1,16 +1,19 @@
 name: Auto commit
 
 on:
-  push:
-    branches:
-      - main
+  # GitHub silently drops scheduled runs when the Actions queue is busy, and
+  # drops them hardest on the hour and half-hour. So: over-schedule on an odd
+  # minute and let the once-per-day guard below decide which attempt counts.
   schedule:
-    # 14:25–18:25 UTC, Mon–Sat = 5 runs/day, 10:25–14:25 Eastern (EDT)
-    - cron: "25 14-18 * * 1-6"
+    - cron: "17 13,15,17,19,21,23 * * 1-6"
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: autocommit-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   auto_commit:
@@ -18,28 +21,43 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
           fetch-depth: 0
 
-      - name: Modify last update
-        run: date '+%Y-%m-%dT%H:%M:%SZ' > LAST_UPDATED
-
-      - name: Commit changes
+      - name: Skip if today is already done
+        id: guard
         run: |
-          git config --local user.name "Shawn Li"
-          git config --local user.email "lishawn81@gmail.com"
-          git add -A
+          today=$(date -u '+%Y-%m-%d')
+          last=$(cut -c1-10 LAST_UPDATED 2>/dev/null || true)
+          if [ "$last" = "$today" ]; then
+            echo "Already committed for $today - skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing yet for $today - proceeding."
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
 
-          arr[0]="chore(bot): commit"
-          arr[1]="chore(bot): bump timestamp"
-          arr[2]="chore(bot): sync"
-          rand=$[$RANDOM % ${#arr[@]}]
+      - name: Commit
+        if: steps.guard.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          git config user.name  "Shawn Li"
+          git config user.email "lishawn81@gmail.com"
 
-          git commit -m "${arr[$rand]}" || echo "nothing to commit"
+          msgs=("chore(bot): commit" "chore(bot): bump timestamp" "chore(bot): sync")
 
-      - name: GitHub Push
-        uses: ad-m/github-push-action@master
-        with:
-          directory: "."
-          branch: main
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          # Per-repo daily share. Six repos x 3..6 => 18..36 commits/day.
+          # Change the 4 and the 3 to retune: n = (RANDOM % spread) + floor.
+          n=$(( (RANDOM % 4) + 3 ))
+          echo "Making $n commits."
+
+          for _ in $(seq 1 "$n"); do
+            # Nanoseconds, so each iteration is a real content change even when
+            # several land inside the same second.
+            date -u '+%Y-%m-%dT%H:%M:%S.%NZ' > LAST_UPDATED
+            git add -A
+            git commit -m "${msgs[$((RANDOM % ${#msgs[@]}))]}"
+          done
+
+      - name: Push
+        if: steps.guard.outputs.run == 'true'
+        run: git push origin HEAD:main
